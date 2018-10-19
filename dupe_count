@@ -1,0 +1,31 @@
+#!/bin/bash
+
+while (( "$#" ))
+do
+	case "$1" in
+		"-h" | "--help")
+				cat <<"EOF" >&2
+Syntax: dupe_count
+
+This command reads (on stdin) the output of file_index, and prefixes a duplicate column
+EOF
+			exit 1
+			;;
+		*)
+			exec "$0" --help
+			;;
+	esac
+	shift
+done
+
+on_exit() {
+	rm -f "$TMP"
+}
+TMP=`mktemp --suffix=.hash_view_tmp`
+trap on_exit EXIT
+
+sponge "$TMP"
+cut -f1 -d $'\t' "$TMP"|
+	sort|
+	uniq -c|sed 's/^ *//; s/  */\t/'|
+	join '-o1.1 1.2 2.2 2.3 2.4' -12 -21 $'-t\t' - "$TMP"

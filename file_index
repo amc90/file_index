@@ -1,0 +1,125 @@
+#!/bin/bash
+
+declare -a DIRS
+
+DEBUG=0
+SIZE=0
+FILE=/dev/null
+while (( "$#" ))
+do
+	case "$1" in
+		"-h" | "--help")
+				cat <<"EOF" >&2
+Syntax: file_index [ -f file ] [ -d ] [ -k kilobytes ] < directory ... >
+
+  -d               Debug mode
+  -k <kilobytes>   Only hash files over <X> kb
+  -f <seedfile>    Use hashes from seedfile to start off, rather than 
+                     recalculating a hash for every file each time.
+This command will search a directory, and for each matching file, will print 
+tab delimited lines in this format:
+  <sha384 checksum>	<bytes>	<epoch>	<filename>
+
+Files with newlines or tabs in their names are ignored.
+EOF
+			exit 1
+			;;
+		"-d")
+			DEBUG=1
+			;;
+		"-k")
+			SIZE=$2
+			shift
+			if [[ ! "$SIZE" =~ ^[0-9]+$ ]]
+			then
+				echo "Expected kilobytes for -k: $SIZE">&2
+				exit 1
+			fi
+			;;
+		"-f")
+			FILE=$2
+			shift
+			touch "$FILE"
+			if [ ! -f "$FILE" ]
+			then
+				echo "Expected a seedfile of hashes in $FILE">&2
+				exit 1
+			fi
+			;;
+		*)
+			S="$(readlink -e "$1")"
+			DIRS[${#DIRS[*]}]="$S"
+			if [ ! -d "$S" ]
+			then
+				echo "Invalid directory: $1">&2
+				exit 1
+			fi
+			;;
+	esac
+	shift
+done
+
+if [ "${#DIRS[*]}" -lt 1 ]
+then
+	echo "Expected directory argument(s)">&2
+	exit 1
+fi
+
+on_exit() {
+	rm -f "$TMP"
+}
+TMP=`mktemp --suffix=.hash_tmp`
+trap on_exit EXIT
+
+#Process seed file
+gawk '-F\t' "-vSIZE=$SIZE" "-vDEBUG=$DEBUG" '
+		@load "filefuncs"
+		BEGIN { SIZE*=1024 }
+		{
+			rc=stat($4, fstat)
+			#90% regular file size is allowed
+			if( (fstat["type"]!="file") ) {
+				if(DEBUG) print "#Seed file, stripping " $4 " - not a file" >"/dev/stderr"
+			} else if (fstat["size"] < SIZE) {
+				if(DEBUG) print "#Seed file, stripping " $4 " - too small " fstat["size"] >"/dev/stderr"
+			} else if (fstat["size"] != $2 ) {
+				if(DEBUG) print "#Seed file, stripping " $4 " - size changed (" $2 "=>" fstat["size" ] ")" >"/dev/stderr"
+			} else if (fstat["mtime"] != $3 ) {
+				if(DEBUG) print "#Seed file, stripping " $4 " - time changed (" $3 "=>" fstat["mtime"] ")" >"/dev/stderr"
+			} else {
+				print $0
+			}
+		}
+		' "$FILE" |LC_ALL=C sort $'-t\t' -k4 |
+		#Now we have the filtered seed file. Join it...
+	LC_ALL=C join -a1 -a2 $'-t\t' -j 4 - <(
+		#With the list of all files under the dirs of interest
+		for DIR in "${DIRS[@]}"
+		do
+			find "$DIR" -size "+${SIZE}k" -type f -regex $'^[^\n\t]*$' -printf '\t%s\t%Ts\t%p\n'
+		done|LC_ALL=C sort $'-t\t' -k4|uniq
+		#Now mangle it back to a single set of fields
+	) | gawk '-F\t' '{
+		file=$1
+		hash=$2
+		size=$3
+		time=$4
+		if( $7 && ($7!=$4) ){time=$7; hash=""}
+		if( $6 && ($6!=$3) ){time=$6; hash=""}
+		printf "%s\t%s\t%s\t%s\n", file, hash , size, time
+		}'|LC_ALL=C sort $'-t\t' -k1 > "$TMP"
+
+#Find missing hashes
+gawk '-F\t' "-vDEBUG=$DEBUG" '
+		$2=="" {
+			print $1
+			if(DEBUG) print "#Will rehash " $1 >"/dev/stderr"
+	}' "$TMP"|
+	xargs -d '\n' sha384sum|
+	sed 's/^\([^ ]*\)  */\1\t/'| #Change sha384sum spaces to tabs#
+	LC_ALL=C sort $'-t\t' -k2|
+	LC_ALL=C join -a1 $'-t\t' -1 1 -2 2 "$TMP" - |
+	gawk '-F\t' '{
+		#Print in correct order
+		printf "%s\t%s\t%s\t%s\n", ($5 ? $5 : $2), $3, $4, $1
+	}'
