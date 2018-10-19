@@ -1,0 +1,133 @@
+#!/bin/bash
+
+CONF_DIR=/var/lib/file_index
+CACHE_DIR=/var/cache/file_index
+
+cd "$(dirname $0)"
+mkdir -p "$CONF_DIR" "$CACHE_DIR"
+
+path_hash () {
+	echo "$1"|md5sum|cut -f1 -d' '
+}
+
+path_hashes() {
+	cd "$CONF_DIR" && find . -maxdepth 1 -type d -name '????????????????????????????????' -printf '%f\n'
+}
+
+get_field() {
+	cat "$CONF_DIR/$1/$2"
+}
+
+MODE=$1
+shift
+case "$MODE" in
+	"-h" | "--help")
+			cat <<"EOF" >&2
+Syntaxes:
+  manage_indexes list
+    List indexes currently maintained
+  manage_indexes  update
+    Update all indexes
+  manage_indexes add <path> <kilobytes>
+    Start indexing <path> (if already indexed, then kilobytes will be updated)
+  manage_indexes  rm <path> 
+    Stop indexing <path> and delete any index
+  manage_indexes  dupes
+    Shows all duplicate counts
+  manage_indexes  dupes <path> 
+    Shows duplicate counts of single path
+
+Files with newlines or tabs in their names are ignored.
+EOF
+		exit 1
+		;;
+	"list")
+		if [ "$#" -ne 0 ]
+		then
+			echo "Syntax: list">&2
+			exit 1
+		fi
+		for H in `path_hashes`
+		do
+			printf "%s\t%s\t%s\n" "$H" "$(get_field $H kilobytes)" "$(get_field $H path)"
+		done
+		;;
+	"update")
+		if [ "$#" -ne 0 ]
+		then
+			echo "Syntax: update">&2
+			exit 1
+		fi
+		for H in `path_hashes`
+		do
+			TARGET="$CACHE_DIR/$H"
+			mkdir -p "$TARGET"
+			touch "$TARGET/index"
+			cp "$TARGET/index" "$TARGET/index.old"
+			./file_index -f "$TARGET/index" -k "$(get_field $H kilobytes)" "$(get_field $H path)" | sponge "$TARGET/index"
+		done
+		;;
+	"add")
+		if [ "$#" -ne 2 ]
+		then
+			echo "Syntax: add <path> <kilobytes>">&2
+			exit 1
+		fi
+		P="$(readlink -e "$1")"
+		K="$2"
+		if [ ! -d "$P" ]
+		then
+			echo "$1 isn't a directory">&2
+			exit 1
+		fi
+		HASH=`path_hash "$P"`
+		mkdir -p "$CONF_DIR/$HASH"
+		mkdir -p "$CACHE_DIR/$HASH"
+		echo $P>"$CONF_DIR/$HASH/path"
+		echo $K>"$CONF_DIR/$HASH/kilobytes"
+		;;
+	"rm")
+		if [ "$#" -ne 1 ]
+		then
+			echo "Syntax: rm <path>">&2
+			exit 1
+		fi
+		P="$(readlink -e "$1")"
+		HASH=`path_hash "$P"`
+		if [ ! -f "$CONF_DIR/$HASH/path" ]
+		then
+			echo "$CONF_DIR/$HASH/path doesn't exist - aborting">&2
+			exit 1
+		fi
+
+		rm "$CONF_DIR/$HASH/path"
+		rm "$CONF_DIR/$HASH/kilobytes"
+		rmdir "$CONF_DIR/$HASH"
+		rm -rf "$CACHE_DIR/$HASH"
+		;;
+	"dupes")
+		if [ "$#" -gt 1 ]
+		then
+			echo "Syntax: dupes <path>">&2
+			exit 1
+		fi
+		if [ "$#" -eq 1 ]
+		then
+			P="$(readlink -e "$1")"
+			HASH=`path_hash "$P"`
+			if [ ! -f "$CACHE_DIR/$HASH/index" ]
+			then
+				echo "$1 isn't an indexed directory">&2
+				exit 1
+			fi
+			cat "$CACHE_DIR/$HASH/index"
+		else
+			cat "$CACHE_DIR/"????????????????????????????????"/index"
+		fi|
+			./dupe_report
+		;;
+	*)
+		"$0" --help
+		exit 1
+		;;
+esac

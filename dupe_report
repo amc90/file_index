@@ -5,7 +5,7 @@ do
 	case "$1" in
 		"-h" | "--help")
 				cat <<"EOF" >&2
-Syntax: dupe_count
+Syntax: dupe_report
 
 This command reads (on stdin) the output of file_index, and prefixes a duplicate column
 EOF
@@ -24,8 +24,7 @@ on_exit() {
 TMP=`mktemp --suffix=.hash_view_tmp`
 trap on_exit EXIT
 
-sponge "$TMP"
+LC_ALL=C sort -k1 $'-t\t'|sponge "$TMP"
 cut -f1 -d $'\t' "$TMP"|
-	sort|
 	uniq -c|sed 's/^ *//; s/  */\t/'|
-	join '-o1.1 1.2 2.2 2.3 2.4' -12 -21 $'-t\t' - "$TMP"
+	LC_ALL=C join '-o1.1 1.2 2.2 2.3 2.4' -12 -21 $'-t\t' - "$TMP"
