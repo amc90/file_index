@@ -123,3 +123,4 @@ gawk '-F\t' "-vDEBUG=$DEBUG" '
 		#Print in correct order
 		printf "%s\t%s\t%s\t%s\n", ($5 ? $5 : $2), $3, $4, $1
 	}'
+
