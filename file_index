@@ -115,7 +115,7 @@ gawk '-F\t' "-vDEBUG=$DEBUG" '
 			print $1
 			if(DEBUG) print "#Will rehash " $1 >"/dev/stderr"
 	}' "$TMP"|
-	xargs -d '\n' sha384sum|
+	xargs -d '\n' nice sha384sum|
 	sed 's/^\([^ ]*\)  */\1\t/'| #Change sha384sum spaces to tabs#
 	LC_ALL=C sort $'-t\t' -k2|
 	LC_ALL=C join -a1 $'-t\t' -1 1 -2 2 "$TMP" - |
